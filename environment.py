@@ -1,9 +1,12 @@
 import numpy as np
-import pygame
+# import pygame
 import random
+import gymnasium as gym
+from gymnasium import spaces
 
-class EmotionWorld:
+class EmotionWorld(gym.Env):
     def __init__(self, width=800, height=600, n_people=100):
+        super(EmotionWorld, self).__init__()
         self.width = width # width of env
         self.height = height # height of env
         self.n_people = n_people # total number of people
@@ -29,16 +32,31 @@ class EmotionWorld:
             'anger': {'spread_rate': 0.6, 'duration': 50, 'radius': 120},
             'neutral': {'spread_rate': 0, 'duration': 0, 'radius': 0} # no emotion
         }
-        
+        # state space
+        self.observation_space = spaces.Box(
+            low=0, high=1, shape=(width // 10 * height // 10 * len(self.emotions),), dtype=np.float32
+        )
+        # action space
+        self.num_emotions = len(['joy', 'sadness', 'fear', 'disgust', 'anger'])
+        self.grid_size = 10
+        self.action_space = spaces.Discrete(self.num_emotions * self.grid_size * self.grid_size)
+
         self.reset()
     
-    def reset(self):
+    def reset(self, seed=None, options=None):
+        if seed is not None:
+            np.random.seed(seed)
+            random.seed(seed)
         # reset everyone's emtion
         for person in self.people: # reset to neutral emotion and zero emotion intensity
             person['emotion'] = 'neutral'
             person['emotion_intensity'] = 0.0
+            person['emotion_duration'] = 0
         
-        return self._get_state()
+        self.steps = 0 # reset step counter
+        state = self._get_state()
+
+        return state, {}
         
     def _update_positions(self):
         for person in self.people:
@@ -132,6 +150,7 @@ class EmotionWorld:
             state[x, y, emotion_idx] += 1
         
         return state.flatten()
+        
 
     
     def _is_episode_done(self):
@@ -147,7 +166,14 @@ class EmotionWorld:
         """
         action: (emotion_type, target_position) 
         """
-        emotion_type, target_pos = action
+        # Decode the action
+        emotion_idx = action // (self.grid_size * self.grid_size)
+        position_idx = action % (self.grid_size * self.grid_size)
+        emotion_type = list(self.emotions.keys())[emotion_idx]
+        x = (position_idx // self.grid_size) * (self.width / self.grid_size)
+        y = (position_idx % self.grid_size) * (self.height / self.grid_size)
+        target_pos = (x, y)
+
         reward = 0
         
         # update people's position
@@ -158,74 +184,20 @@ class EmotionWorld:
         reward += directly_affected  # number of people direcly affected by player
 
         # emotion spread chain
+        reward = self._spread_emotion(emotion_type, target_pos)
         chain_affected = self._spread_emotion_chain()
         reward += chain_affected  # numbe of people affected by chain        
         
-        # update emotion spread
+        # updateemotion spread
         self._update_emotions()
         
         # get new state
         new_state = self._get_state()
         
+        # step counter + 1
+        self.steps += 1
+
         # check if the episode is done
         done = self._is_episode_done()
         
-        return new_state, reward, done
-
-if __name__ == "__main__":
-    # create an EmotionWorld object
-    world = EmotionWorld()
-
-    # initialize pygame
-    pygame.init()
-    screen = pygame.display.set_mode((world.width, world.height))  # create a window
-    pygame.display.set_caption("Emotion World Simulation")  # set title
-
-    clock = pygame.time.Clock()  # control frame rate
-    running = True  # control the main loop
-
-    while running:
-        # handle events (e.g., closing the window)
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-
-        # randomly trigger emotion propagation in each frame
-        if random.random() < 0.5:  # increase the trigger probability
-            emotion_type = random.choice(['joy', 'sadness', 'anger', 'fear', 'disgust'])
-            target_pos = (random.randint(0, world.width), random.randint(0, world.height))
-            affected_count = world._spread_emotion(emotion_type, target_pos)
-            print(f"Triggered {emotion_type} at {target_pos}, affected {affected_count} people")
-
-        # update the world state
-        world._update_positions()
-        world._update_emotions()
-        chain_affected = world._spread_emotion_chain()
-        print(f"Chain affected count: {chain_affected}")
-
-        # render the current state of the world
-        screen.fill((255, 255, 255))  # white background
-        for person in world.people:
-            # choose color based on emotion
-            if person['emotion'] == 'joy':
-                color = (0, 255, 0)  # green
-            elif person['emotion'] == 'sadness':
-                color = (0, 0, 255)  # blue
-            elif person['emotion'] == 'anger':
-                color = (255, 0, 0)  # red
-            elif person['emotion'] == 'fear':
-                color = (128, 0, 128)  # purple
-            elif person['emotion'] == 'disgust':
-                color = (255, 128, 0)  # orange
-            else:
-                color = (200, 200, 200)  # neutral emotion is gray
-
-            position = person['position'].astype(int)
-            pygame.draw.circle(screen, color, position, 5)
-
-        pygame.display.flip()  # refresh the screen
-
-        clock.tick(30)  # 30 frames per second
-
-    pygame.quit()  # exit pygame
-
+        return new_state, reward, done, False, {}

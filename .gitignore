@@ -1,2 +1,7 @@
 myenv/
 .venv/
+__pycache__/
+*.pyc
+*.pyo
+*.zip
+.DS_Store
